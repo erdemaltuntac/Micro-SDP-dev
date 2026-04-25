@@ -12,7 +12,7 @@ What it does
 1. Configure LearnConfig with the paper's hyper-parameters.
 2. Load all five BSCCM-tiny channels via the BSCCM data pipeline.
 3. Run Algorithm 2 (learn_joint_multichannel).
-4. Save all artifacts (dictionaries, codes, unified descriptors, CSV, JSON).
+4. Save all results (dictionaries, codes, unified descriptors, CSV, JSON).
 5. Evaluate per-channel reconstruction quality (Table 1 of paper).
 6. Generate convergence plots.
 7. Generate unified single-cell portrait (Section 9).
@@ -22,7 +22,7 @@ What it does
 11. Generate orig/focused/reconstruction comparison figure.
 
 Outputs land in:
-    dev/training_artifacts_Joint5ch_<timestamp>_seed<seed>/
+    dev/training_results_Joint5ch_<timestamp>_seed<seed>/
 """
 from __future__ import annotations
 
@@ -35,22 +35,22 @@ import numpy as np
 
 # ---------------------------------------------------------------------------
 # Ensure dev/ directory is on sys.path so that read_bsccm_data / focus_l1
-# can be imported by the sdp sub-modules.
+# can be imported by the learning sub-modules.
 # ---------------------------------------------------------------------------
-_DEV = pathlib.Path(__file__).resolve().parent
-if str(_DEV) not in sys.path:
-    sys.path.insert(0, str(_DEV))
+DEV_DIR = pathlib.Path(__file__).resolve().parent
+if str(DEV_DIR) not in sys.path:
+    sys.path.insert(0, str(DEV_DIR))
 
 import matplotlib
 matplotlib.use("Agg")   # headless rendering
 
-from sdp.config       import LearnConfig, BSCCM_CHANNELS
-from sdp.data_loader  import load_all_channels
-from sdp.train_joint  import learn_joint_multichannel
-from sdp.artifacts    import save_joint_artifacts
-from sdp.evaluate     import evaluate_and_save_reconstructions, run_biological_validation
-from sdp.pdhg_solver  import prox_tv_nn_pdhg
-from sdp.plots        import (
+from learning.config       import LearnConfig, BSCCM_CHANNELS
+from learning.data_loader  import load_all_channels
+from learning.train_joint  import learn_joint_multichannel
+from learning.results    import save_joint_results
+from learning.evaluate     import evaluate_and_save_reconstructions, run_biological_validation
+from learning.pdhg_solver  import prox_tv_nn_pdhg
+from learning.plots        import (
     save_convergence_plots,
     save_single_unified_cell,
     save_unified_cell_figure,
@@ -61,6 +61,8 @@ from sdp.plots        import (
 
 def main() -> None:
     """Joint multi-channel training on all five BSCCM LED-array channels."""
+
+    stamp = time.strftime("%d-%m-%Y-%H-%M-%S")
 
     # ------------------------------------------------------------------ #
     #  Configuration                                                       #
@@ -92,7 +94,7 @@ def main() -> None:
     #  Load all five BSCCM channels                                        #
     # ------------------------------------------------------------------ #
     print("Loading BSCCM images for all channels ...")
-    _t_load_start = time.perf_counter()
+    t_load_start = time.perf_counter()
     images_per_channel, train_indices = load_all_channels(
         location="BSCCM-tiny",
         tiny=True,
@@ -102,13 +104,13 @@ def main() -> None:
         focus_method="gradient",
         output_dir="bsccm_out_image",
     )
-    _t_load_end = time.perf_counter()
-    load_time_s = _t_load_end - _t_load_start
+    t_load_end = time.perf_counter()
+    load_time_s = t_load_end - t_load_start
 
     ref_ch = list(images_per_channel.keys())[0]
     N_loaded, H, W = images_per_channel[ref_ch].shape
     n = H * W
-    k = min(512, n)
+    k = min(cfg.k_max, n)
 
     print(f"n={n}  K={k}  channels={list(images_per_channel.keys())}")
     print(
@@ -128,15 +130,15 @@ def main() -> None:
     print(f"\n{'='*60}")
     print(f"  [TIMING] Training started ...")
     print(f"{'='*60}")
-    _t_train_start = time.perf_counter()
+    t_train_start = time.perf_counter()
     D_per_channel, A_per_channel, Phi, hist, per_image_rows = learn_joint_multichannel(
         images_per_channel=images_per_channel,
         k=k,
         cfg=cfg,
         dataset_indices=train_indices,
     )
-    _t_train_end = time.perf_counter()
-    train_time_s = _t_train_end - _t_train_start
+    t_train_end = time.perf_counter()
+    train_time_s = t_train_end - t_train_start
 
     n_outer_done = len(hist.get("fidelity", [cfg.outer_iters]))
     total_samples = N_loaded * len(images_per_channel) * n_outer_done
@@ -153,15 +155,14 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------ #
-    #  Save artifacts                                                      #
+    #  Save results                                                      #
     # ------------------------------------------------------------------ #
-    stamp = time.strftime("%Y%m%dT%H%M%S")
-    out_dir = str(_DEV / f"training_artifacts_Joint5ch_{stamp}_seed{cfg.seed}")
+    out_dir = str(DEV_DIR / f"training_results_Joint5ch_{stamp}_seed{cfg.seed}")
 
     hist["load_time_s"]  = round(load_time_s, 3)
     hist["train_time_s"] = round(train_time_s, 3)
 
-    save_joint_artifacts(
+    save_joint_results(
         out_dir=out_dir,
         D_per_channel=D_per_channel,
         A_per_channel=A_per_channel,
@@ -191,22 +192,22 @@ def main() -> None:
     # ------------------------------------------------------------------ #
     #  Convergence plots                                                   #
     # ------------------------------------------------------------------ #
-    _rep_ch  = list(images_per_channel.keys())[0]
-    _rep_img = images_per_channel[_rep_ch][train_indices[0]].reshape(H, W)
+    rep_ch  = list(images_per_channel.keys())[0]
+    rep_img = images_per_channel[rep_ch][train_indices[0]].reshape(H, W)
     lam_tv_plot = float(cfg.mu_tv * cfg.delta)
-    _, _pdhg_res = prox_tv_nn_pdhg(
-        x_datum=_rep_img,
+    _, pdhg_res = prox_tv_nn_pdhg(
+        x_datum=rep_img,
         lam_tv=lam_tv_plot,
-        n_iters=1000,
+        n_iters=cfg.plot_pdhg_iters,
         tau_tv=cfg.tau_tv,
         sigma_tv=cfg.sigma_tv,
-        tol=1e-12,
+        tol=cfg.plot_pdhg_tol,
         return_residuals=True,
     )
     save_convergence_plots(
         hist,
         output_dir=str(pathlib.Path(out_dir) / "error_analysis"),
-        pdhg_residuals=_pdhg_res,
+        pdhg_residuals=pdhg_res,
         per_image_rows=per_image_rows,
         channels=list(images_per_channel.keys()),
         eps_relerr=cfg.eps_relerr,
@@ -215,17 +216,17 @@ def main() -> None:
     # ------------------------------------------------------------------ #
     #  Unified single-cell portrait  (Section 9)                          #
     # ------------------------------------------------------------------ #
-    _bio_label_dir   = _DEV / "bsccm_real_out"
-    _li_path         = _bio_label_dir / "label_indices.npy"
-    _portrait_idx    = 0
-    if _li_path.exists():
-        _label_idxs    = np.load(str(_li_path)).astype(int)
-        _train_idx_map = {int(idx): row for row, idx in enumerate(train_indices)}
-        for _ds_idx in _label_idxs:
-            if int(_ds_idx) in _train_idx_map:
-                _portrait_idx = _train_idx_map[int(_ds_idx)]
-                print(f"[Portrait] Using labeled cell ds_idx={_ds_idx} "
-                      f"(row={_portrait_idx}) for unified portrait.")
+    portrait_label_dir   = DEV_DIR / "bsccm_real_out"
+    li_path         = portrait_label_dir / "label_indices.npy"
+    portrait_idx    = 0
+    if li_path.exists():
+        label_idxs    = np.load(str(li_path)).astype(int)
+        train_idx_map = {int(idx): row for row, idx in enumerate(train_indices)}
+        for ds_idx in label_idxs:
+            if int(ds_idx) in train_idx_map:
+                portrait_idx = train_idx_map[int(ds_idx)]
+                print(f"[Portrait] Using labeled cell ds_idx={ds_idx} "
+                      f"(row={portrait_idx}) for unified portrait.")
                 break
 
     save_single_unified_cell(
@@ -234,7 +235,7 @@ def main() -> None:
         images_per_channel=images_per_channel,
         cfg=cfg,
         out_dir=out_dir,
-        cell_idx=_portrait_idx,
+        cell_idx=portrait_idx,
     )
 
     # ------------------------------------------------------------------ #
@@ -245,13 +246,13 @@ def main() -> None:
         A_per_channel=A_per_channel,
         images_per_channel=images_per_channel,
         out_dir=out_dir,
-        n_cells=5,
+        n_cells=cfg.n_cells_grid,
     )
 
     # ------------------------------------------------------------------ #
     #  Biological validation                                               #
     # ------------------------------------------------------------------ #
-    bio_label_dir            = _DEV / "bsccm_real_out"
+    bio_label_dir            = DEV_DIR / "bsccm_real_out"
     label_indices_path       = str(bio_label_dir / "label_indices.npy")
     label_class_labels_path  = str(bio_label_dir / "label_class_labels.npy")
 
@@ -264,14 +265,14 @@ def main() -> None:
             label_class_labels_path=label_class_labels_path,
             out_dir=str(pathlib.Path(out_dir) / "bio_validation"),
         )
-        for _gt_ch in images_per_channel.keys():
+        for gt_ch in images_per_channel.keys():
             save_unified_vs_truth(
                 D_per_channel=D_per_channel,
                 A_per_channel=A_per_channel,
                 images_per_channel=images_per_channel,
                 train_indices=train_indices,
                 out_dir=out_dir,
-                gt_channel=_gt_ch,
+                gt_channel=gt_ch,
             )
     else:
         print(
@@ -336,7 +337,7 @@ def main() -> None:
         w.writerow(timing_row)
 
     print(f"\n{'='*60}")
-    print(f"  All artifacts in: {out_dir}/")
+    print(f"  All results in: {out_dir}/")
     print(f"  Files:")
     for p in sorted(pathlib.Path(out_dir).rglob("*")):
         if p.is_file():
