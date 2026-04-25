@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/aegis_logo_dark.svg"/>
-    <source media="(prefers-color-scheme: light)" srcset="assets/aegis_logo.svg"/>
+    <source media="(prefers-color-scheme: dark)" srcset="logo/aegis_logo_dark.svg"/>
+    <source media="(prefers-color-scheme: light)" srcset="logo/aegis_logo.svg"/>
     <img src="assets/aegis_logo.svg" alt="Aegis Digital Technologies" height="520"/>
   </picture>
 </p>
