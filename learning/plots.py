@@ -408,15 +408,15 @@ def save_unified_cell_figure(
                 ax.set_ylabel(f"cell {cell_idx}", fontsize=9, rotation=0,
                               labelpad=36, va="center")
             ax.text(0.98, 0.02, f"e={rel_err:.3f}",
-                    transform=ax.transAxes, fontsize=7, color="white",
+                    transform=ax.transAxes, fontsize=12, color="white",
                     ha="right", va="bottom",
                     bbox=dict(boxstyle="round,pad=0.15", fc="black", alpha=0.45))
 
     fig.text(0.01, 0.5, "top: input  |  bottom: D·a",
              va="center", rotation=90, fontsize=8, color="0.4")
     fig.suptitle(
-        f"Unified cell reconstructions across all {C} channels\n"
-        f"(shared dictionary D, {n_cells} cells shown)",
+        f"Cell reconstructions across all {C} channels  ({n_cells} cells shown)\n"
+        f"top: input image  |  bottom: per-channel reconstruction  D^(c) a_j^(c)",
         fontsize=12, fontweight="bold", y=1.01,
     )
 
