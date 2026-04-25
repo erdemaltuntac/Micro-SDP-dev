@@ -1,5 +1,5 @@
-<p align="right">
-  <img src="assets/aegis_logo.svg" alt="Aegis Digital Technologies" height="50"/>
+<p align="center">
+  <img src="assets/aegis_logo.svg" alt="Aegis Digital Technologies" height="120"/>
 </p>
 
 # Micro-SDP
