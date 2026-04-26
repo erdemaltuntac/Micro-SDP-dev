@@ -37,14 +37,14 @@ try:
     from read_bsccm_data import BSCCM_Img_Reader
     _HAS_BSCCM = True
 except Exception:
-    BSCCM_Img_Reader = None  # type: ignore
+    BSCCM_Img_Reader = None 
     _HAS_BSCCM = False
 
 try:
     from focus_l1 import get_focus_analysis_for_image
     _HAS_FOCUS = True
 except Exception:
-    get_focus_analysis_for_image = None  # type: ignore
+    get_focus_analysis_for_image = None 
     _HAS_FOCUS = False
 
 from .config   import LearnConfig
@@ -531,22 +531,6 @@ def save_unified_vs_truth(
     """
     For each labeled cell in the training set, display its ground-truth
     focused crop (gt_channel) alongside its unified image
-    u_j = Σ w_c D^(c) a_j^(c) (inverse-residual weighted).
-
-    Organized by cell type (Lymphocyte / Granulocyte / Monocyte).
-    Label files loaded from bsccm_real_out/ next to this script.
-
-    Call this function once per channel to produce one figure per channel.
-    In run_training.py / run_post_training_figures.py the caller loops over
-    ``images_per_channel.keys()`` so a separate PNG is written for every
-    available imaging channel, e.g.::
-
-        for gt_ch in images_per_channel.keys():
-            save_unified_vs_truth(..., gt_channel=gt_ch)
-
-    Output filename: unified_vs_truth_<gt_channel>_<timestamp>.png
-
-    Requires BSCCM_Img_Reader, focus_l1, and label files from bsccm_real.py.
     """
     if not _HAS_BSCCM:
         print("[UnifiedVsTruth] BSCCM reader unavailable, skipping.")
