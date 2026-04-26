@@ -1,17 +1,11 @@
 """
-train_single.py — Algorithm 1: single-channel dictionary learning.
+train_single.py - Algorithm 1: single-channel dictionary learning.
 
-Public API
-----------
-learn_dictionary_from_images(images, k, cfg, dataset_indices, channel)
-    -> D, A, hist, per_image_rows
-
-Helper (used internally by train_joint.py as well):
-print_quality_report(X, D, A, idxs, n_used, cfg, channel)
+The core inner pass (_channel_inner_pass) is also imported by train_joint.py
+so that Algorithm 2 reuses the same per-channel PDHG step without duplication.
 """
 from __future__ import annotations
 
-import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -34,7 +28,7 @@ except Exception:
 
 
 # ---------------------------------------------------------------------------
-# Internal helper
+# Quality report
 # ---------------------------------------------------------------------------
 
 def print_quality_report(
@@ -66,6 +60,120 @@ def print_quality_report(
 
 
 # ---------------------------------------------------------------------------
+# Inner PDHG pass  (shared with Algorithm 2 via train_joint.py)
+# ---------------------------------------------------------------------------
+
+def channel_inner_pass(
+    X_ch: np.ndarray,
+    D_ch: np.ndarray,
+    A_ch: np.ndarray,
+    Y_ch: np.ndarray,
+    idxs: np.ndarray,
+    n_used: int,
+    lam_tv: float,
+    outer_iter: int,
+    cfg: LearnConfig,
+    channel: str,
+    dataset_indices: List[int],
+    H: int,
+    W: int,
+    images_orig: Optional[np.ndarray] = None,
+) -> Tuple[List[float], List[int], float, float, float, float, float, List[Dict]]:
+    """
+    Inner PDHG pass for one channel over n_used images (one outer iteration).
+
+    Updates A_ch and Y_ch in place.  Returns
+        (pdhg_final_res, pdhg_iters_used,
+         tv_acc, fid_acc, obj_acc, nonneg_acc, rel_err_acc,
+         per_image_rows)
+
+    Parameters
+    ----------
+    X_ch        : (N, n) flattened images for this channel.
+    D_ch        : (n, k) current dictionary.
+    A_ch        : (N, k) sparse codes — updated in place.
+    Y_ch        : (N, n) TV-NN projected images — updated in place.
+    idxs        : shuffled sample indices.
+    n_used      : number of samples to process this iteration.
+    lam_tv      : current TV regularisation weight.
+    outer_iter  : 1-based outer iteration number (used for logging rows only).
+    cfg         : LearnConfig.
+    channel     : channel name string (for logging rows).
+    dataset_indices : mapping from local index to dataset index.
+    H, W        : spatial dimensions.
+    images_orig : original (N, H, W) images; passed only when focus analysis
+                  is wanted (Algorithm 1).  Pass None to skip.
+    """
+    tv_acc = fid_acc = obj_acc = nonneg_acc = rel_err_acc = 0.0
+    pdhg_final_res: List[float] = []
+    pdhg_iters_used: List[int] = []
+    per_image_rows: List[Dict] = []
+
+    for ii in range(n_used):
+        j = int(idxs[ii])
+        x2d = X_ch[j].reshape(H, W)
+
+        y2d, res_list = prox_tv_nn_pdhg(
+            x_datum=x2d, lam_tv=lam_tv,
+            n_iters=cfg.pdhg_iters, tau_tv=cfg.tau_tv, sigma_tv=cfg.sigma_tv,
+            theta=1.0, tol=cfg.pdhg_tol, return_residuals=True,
+        )
+        pdhg_final_res.append(res_list[-1] if res_list else 0.0)
+        pdhg_iters_used.append(len(res_list))
+
+        y = y2d.ravel()
+        a_new = D_ch.T @ y
+        A_ch[j] = a_new
+        Y_ch[j] = y
+
+        r = X_ch[j] - D_ch @ a_new
+        fidelity = 0.5 * float(np.dot(r, r))
+        gv = grad_forward(y2d)
+        tv_val = float(np.sum(np.sqrt(gv[..., 0] ** 2 + gv[..., 1] ** 2)))
+        # fidelity + lam_tv * TV(y) + indicator_{y >= 0}
+        obj = fidelity + lam_tv * tv_val
+        nonneg_viol = float(np.mean(y < -1e-10))
+        x_norm = float(np.linalg.norm(X_ch[j]))
+        rel_err = 100.0 * float(np.linalg.norm(r) / max(x_norm, 1e-9))
+
+        tv_acc      += lam_tv * tv_val
+        fid_acc     += fidelity
+        obj_acc     += obj
+        nonneg_acc  += nonneg_viol
+        rel_err_acc += rel_err
+
+        row: Dict = {
+            "outer_iter":       float(outer_iter),
+            "channel":          channel,
+            "image_pos":        float(ii),
+            "dataset_index":    float(dataset_indices[j]),
+            "fidelity":         fidelity,
+            "tv_energy":        lam_tv * tv_val,
+            "obj":              obj,
+            "nonneg_violation": nonneg_viol,
+            "rel_err":          rel_err,
+            "lam_tv":           lam_tv,
+            "tau_tv":           cfg.tau_tv,
+            "sigma_tv":         cfg.sigma_tv,
+        }
+        if images_orig is not None and _HAS_FOCUS:
+            fx = get_focus_analysis_for_image(
+                images_orig[j], int(dataset_indices[j]),
+                channel=channel, method="gradient",
+            )
+            for key in ("l1_total", "metric_value", "area_reduction_ratio"):
+                if key in fx:
+                    row[f"focus_{key}"] = float(fx[key])
+        per_image_rows.append(row)
+
+    return (
+        pdhg_final_res, pdhg_iters_used,
+        tv_acc, fid_acc, obj_acc, nonneg_acc, rel_err_acc,
+        per_image_rows,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Algorithm 1
 # ---------------------------------------------------------------------------
 
@@ -80,34 +188,15 @@ def learn_dictionary_from_images(
     Algorithm 1: alternating proximal-gradient dictionary learning
     for a single imaging channel.
 
-    Inference step (per sample, fixed D)
-    -------------------------------------
-    y_j* = argmin_y  1/2 ||y - x_j||^2  +  lambda_TV * TV(y)  +  iota_{R^n_+}(y)
-    solved by prox_tv_nn_pdhg() with tau = sigma = 1/4.
-
-    Code update
-    -----------
-    a_j = D^T y_j*   (exact back-projection, D^T D = I_K)
-
-    Dictionary update (Procrustes SVD, Section 7.8)
-    -------------------------------------------------
-    G = (1/N) sum_j (D a_j - y_j*) a_j^T
-    Exact global optimum: D* = U V^T from SVD of X^T A.
-
-    Parameters
+    Outer loop
     ----------
-    images          : (N, H, W) float array of single-cell images in [0, 1]
-    k               : number of dictionary atoms
-    cfg             : LearnConfig
-    dataset_indices : optional list mapping batch row -> dataset index (for logging)
-    channel         : channel name string (for logging/CSV)
-
-    Returns
-    -------
-    D              : (n, k)   learned orthonormal dictionary
-    A              : (N, k)   codes a_j = D^T y_j* for each training sample
-    hist           : dict of per-outer-iteration scalar metrics
-    per_image_rows : list of per-sample dicts for CSV logging
+    For each iteration t:
+      1. _channel_inner_pass  — PDHG solve per image, update codes A and
+         projected images Y.
+      2. Procrustes dictionary update  — exact SVD projection onto Stiefel
+         manifold (Section 7.8 of the paper).
+      3. Refresh codes with the updated dictionary.
+      4. Check convergence; stop early if patience is exceeded.
     """
     if images.ndim != 3:
         raise ValueError("images must have shape (N, H, W)")
@@ -145,87 +234,40 @@ def learn_dictionary_from_images(
     idxs = np.arange(N)
     consecutive_stop = 0
     obj_prev = float("inf")
+    n_used = N  # defined here so it is always bound after the loop
 
     for t in range(cfg.outer_iters):
+        # ---------------------------------------------------------------
+        # TODO: Investigate data-adaptive lam_tv schedule (e.g. based on
+        #       primal/dual residuals or relative objective change).
         lam_tv = max(lam_tv_floor, cfg.lam_tv_init / (1.0 + cfg.lam_tv_decay * t))
-
+        # ---------------------------------------------------------------
         if cfg.shuffle:
             np.random.default_rng(cfg.seed + t).shuffle(idxs)
 
         n_used = N if cfg.max_samples <= 0 else min(cfg.max_samples, N)
 
-        tv_acc = fid_acc = obj_acc = nonneg_acc = rel_err_acc = 0.0
-        pdhg_final_res: List[float] = []
-        pdhg_iters_used: List[int] = []
+        # Step 1 — inner PDHG pass
+        (pdhg_final_res, pdhg_iters_used,
+         tv_acc, fid_acc, obj_acc, nonneg_acc, rel_err_acc,
+         rows) = channel_inner_pass(
+            X, D, A, Y,
+            idxs, n_used, lam_tv, t + 1,
+            cfg, channel, dataset_indices, H, W,
+            images_orig=images,
+        )
+        per_image_rows.extend(rows)
 
-        for ii in range(n_used):
-            j = int(idxs[ii])
-            x2d = X[j].reshape(H, W)
-
-            y2d, res_list = prox_tv_nn_pdhg(
-                x_datum=x2d, lam_tv=lam_tv,
-                n_iters=cfg.pdhg_iters, tau_tv=cfg.tau_tv, sigma_tv=cfg.sigma_tv,
-                theta=1.0, tol=cfg.pdhg_tol, return_residuals=True,
-            )
-            pdhg_final_res.append(res_list[-1] if res_list else 0.0)
-            pdhg_iters_used.append(len(res_list))
-
-            y = y2d.ravel()
-            a_new = D.T @ y
-            A[j] = a_new
-            Y[j] = y
-
-            r = X[j] - D @ a_new
-            fidelity = 0.5 * float(np.dot(r, r))
-            gv = grad_forward(y2d)
-            tv_val = float(np.sum(np.sqrt(gv[..., 0] ** 2 + gv[..., 1] ** 2)))
-            obj = fidelity + lam_tv * tv_val
-            nonneg_viol = float(np.mean(y < -1e-10))
-            x_norm = float(np.linalg.norm(X[j]))
-            recon = D @ a_new
-            rel_err = 100.0 * float(np.linalg.norm(X[j] - recon) / max(x_norm, 1e-9))
-
-            tv_acc += lam_tv * tv_val
-            fid_acc += fidelity
-            obj_acc += obj
-            nonneg_acc += nonneg_viol
-            rel_err_acc += rel_err
-
-            row: Dict = {
-                "outer_iter": float(t + 1),
-                "channel": channel,
-                "image_pos": float(ii),
-                "dataset_index": float(dataset_indices[j]),
-                "fidelity": fidelity,
-                "tv_energy": lam_tv * tv_val,
-                "obj": obj,
-                "nonneg_violation": nonneg_viol,
-                "rel_err": rel_err,
-                "lam_tv": lam_tv,
-                "tau_tv": cfg.tau_tv,
-                "sigma_tv": cfg.sigma_tv,
-            }
-            if _HAS_FOCUS:
-                fx = get_focus_analysis_for_image(
-                    images[j], int(dataset_indices[j]),
-                    channel=channel, method="gradient"
-                )
-                for key in ("l1_total", "metric_value", "area_reduction_ratio"):
-                    if key in fx:
-                        row[f"focus_{key}"] = float(fx[key])
-            per_image_rows.append(row)
-
-        # --- Dictionary update: exact Procrustes SVD (Section 7.8) ---
+        # Step 2 — Procrustes dictionary update (Section 7.8)
         D_old = D.copy()
-        X_used = X[idxs[:n_used]]
-        A_used = A[idxs[:n_used]]
-        D = procrustes_update(X_used, A_used)
+        D = procrustes_update(X[idxs[:n_used]], A[idxs[:n_used]])
         dict_change = float(np.linalg.norm(D - D_old, "fro"))
-        grad_norm   = float(np.linalg.norm(X_used.T @ A_used, "fro"))
+        grad_norm   = float(np.linalg.norm(X[idxs[:n_used]].T @ A[idxs[:n_used]], "fro"))
 
-        # Refresh codes with the new dictionary
+        # Step 3 — refresh codes with the updated dictionary
         A[idxs[:n_used]] = Y[idxs[:n_used]] @ D
 
+        # --- history ---
         pfr = np.array(pdhg_final_res, dtype=float)
         piu = np.array(pdhg_iters_used, dtype=float)
         conv_frac  = float(np.mean(piu < cfg.pdhg_iters)) if len(piu) > 0 else 0.0
@@ -251,7 +293,7 @@ def learn_dictionary_from_images(
             f"[{channel}] outer {t+1:3d}/{cfg.outer_iters}  "
             f"lambda_TV={lam_tv:.3e}  fidelity={fid_acc/n_used:.4e}  "
             f"tv={tv_acc/n_used:.4e}  nonneg_viol={nonneg_acc/n_used:.2e}  "
-            f"||Grad_D||={grad_norm:.4e}  ΔD={dict_change:.4e}  "
+            f"||Grad_D||={grad_norm:.4e}  Delta_D={dict_change:.4e}  "
             f"rel_err={rel_err_acc/n_used:.4f}"
         )
         print(
@@ -261,6 +303,7 @@ def learn_dictionary_from_images(
             f"converged={conv_frac*100:.1f}%"
         )
 
+        # Step 4 — convergence check
         obj_cur = fid_acc / n_used
         obj_rel_change = abs(obj_cur - obj_prev) / (abs(obj_prev) + 1e-12)
         obj_prev = obj_cur

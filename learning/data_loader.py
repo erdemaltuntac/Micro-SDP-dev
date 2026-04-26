@@ -1,12 +1,5 @@
 """
-data_loader.py — BSCCM image loading pipeline.
-
-Loads single-cell images from the BSCCM dataset (or BSCCM-tiny) for one
-or all channels, applies optional gradient-energy focus cropping, and
-normalizes each image independently to [0, 1].
-
-Requires read_bsccm_data.py (BSCCM_Img_Reader) to be on the Python path.
-Optionally uses focus_l1.py (get_focus_analysis_for_image) when use_focused=True.
+data_loader.py - BSCCM image loading pipeline.
 """
 from __future__ import annotations
 
@@ -51,24 +44,6 @@ def load_images_bsccm_pipeline(
 ) -> Tuple[np.ndarray, List[int]]:
     """
     Load and preprocess images from the BSCCM dataset for one channel.
-
-    Each image is normalised independently to [0, 1] via min-max scaling.
-    Optional gradient-energy focus cropping is applied when use_focused=True.
-
-    Parameters
-    ----------
-    location     : path to the BSCCM dataset root (or "BSCCM-tiny")
-    tiny         : if True, use the BSCCM-tiny subset
-    channel      : imaging channel name (e.g. "DPC_Left", "Brightfield")
-    n_images     : max number of images to load; 0 = all available
-    use_focused  : apply gradient-energy focus crop (requires focus_l1.py)
-    focus_method : focus metric; "gradient" (default)
-    output_dir   : scratch directory for BSCCM_Img_Reader
-
-    Returns
-    -------
-    images  : (N, H, W) float64 in [0, 1]
-    indices : list of BSCCM dataset indices used
     """
     if not _HAS_BSCCM:
         raise RuntimeError(
@@ -132,25 +107,6 @@ def load_all_channels(
 ) -> Tuple[Dict[str, np.ndarray], List[int]]:
     """
     Load all specified channels from the BSCCM dataset.
-
-    All channels are cropped to the same (H, W) determined by the minimum
-    focused-image size across all channels and images, so every channel
-    array has identical shape (N, H, W) ready for joint training.
-
-    Parameters
-    ----------
-    location     : path to BSCCM dataset root (or "BSCCM-tiny")
-    tiny         : if True, use BSCCM-tiny subset
-    channels     : list of channel names (default: all five BSCCM channels)
-    n_images     : max images per channel; 0 = all available
-    use_focused  : apply focus crop
-    focus_method : focus metric
-    output_dir   : scratch directory for BSCCM_Img_Reader
-
-    Returns
-    -------
-    images_per_channel : dict channel -> (N, H, W) float64 in [0, 1]
-    indices            : shared list of dataset indices (same for all channels)
     """
     if not _HAS_BSCCM:
         raise RuntimeError("BSCCM_Img_Reader not available.")

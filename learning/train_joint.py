@@ -1,14 +1,10 @@
 """
-train_joint.py — Algorithm 2: joint multi-channel dictionary learning.
+train_joint.py - Algorithm 2: joint multi-channel dictionary learning.
 
-Public API
-----------
-learn_joint_multichannel(images_per_channel, k, cfg, dataset_indices)
-    -> D_per_channel, A_per_channel, Phi, hist, per_image_rows
-
-All C channels share the structural primitive vocabulary but each have
-an independent dictionary D^(c). Per-channel codes are concatenated
-into the unified cell descriptor Phi (eq. 87 of the manuscript).
+Algorithm 2 wraps Algorithm 1 as its inner step: for each outer iteration the
+same per-channel PDHG pass (_channel_inner_pass from train_single) is applied
+to every channel under a shared lam_tv schedule and a shared convergence
+criterion, before each channel's dictionary is updated via Procrustes.
 """
 from __future__ import annotations
 
@@ -18,9 +14,8 @@ import numpy as np
 
 from .config          import LearnConfig
 from .dictionary_init import dictionary
-from .pdhg_solver     import prox_tv_nn_pdhg
 from .stiefel         import procrustes_update
-from .tv_operators    import grad_forward
+from .train_single    import channel_inner_pass
 
 
 # ---------------------------------------------------------------------------
@@ -75,28 +70,6 @@ def learn_joint_multichannel(
     """
     Algorithm 2: joint multi-channel dictionary learning and cell feature
     unification (Section 9 of the paper).
-
-    Each channel gets an independent dictionary D^(c) (n x K), learned from
-    its own channel data via a per-channel Procrustes SVD. This eliminates
-    the C:1 channel bias of a shared-dictionary approach.
-
-    After convergence the unified cell descriptor is formed as:
-        phi_j = ( a_j^(1), a_j^(2), ..., a_j^(C) ) in R^{C*K}   (eq. 87)
-
-    Parameters
-    ----------
-    images_per_channel : dict channel -> (N, H, W) float64 in [0, 1]
-    k                  : number of dictionary atoms (shared across channels)
-    cfg                : LearnConfig
-    dataset_indices    : optional list of BSCCM dataset indices (for logging)
-
-    Returns
-    -------
-    D_per_channel  : dict channel -> (n, K) orthonormal dictionary
-    A_per_channel  : dict channel -> (N, K) codes
-    Phi            : (N, C*K) unified cell descriptors phi_j
-    hist           : dict of per-outer-iteration scalar metrics
-    per_image_rows : list of per-sample dicts for CSV logging
     """
     channels = list(images_per_channel.keys())
     C = len(channels)
@@ -157,10 +130,14 @@ def learn_joint_multichannel(
     idxs = np.arange(N)
     consecutive_stop = 0
     obj_prev = float("inf")
+    n_used = N  # defined here so it is always bound after the loop
 
     for t in range(cfg.outer_iters):
+        # ---------------------------------------------------------------
+        # TODO: Investigate data-adaptive lam_tv schedule (e.g. based on
+        #       primal/dual residuals or relative objective change).
         lam_tv = max(lam_tv_floor, cfg.lam_tv_init / (1.0 + cfg.lam_tv_decay * t))
-
+        # ---------------------------------------------------------------
         if cfg.shuffle:
             np.random.default_rng(cfg.seed + t).shuffle(idxs)
 
@@ -168,63 +145,33 @@ def learn_joint_multichannel(
 
         tv_acc = fid_acc = obj_acc = nonneg_acc = rel_err_acc = 0.0
         n_total = 0
-        pdhg_final_res: List[float] = []
-        pdhg_iters_used: List[int] = []
+        all_pdhg_res: List[float] = []
+        all_pdhg_iters: List[int] = []
 
-        # Middle loop: iterate over channels (Algorithm 2 lines 4–8)
+        # Step 1 - inner PDHG pass for every channel (Algorithm 1 inner step)
         for ch in channels:
-            X_ch = X[ch]
+            (pfr, piu,
+             tv_ch, fid_ch, obj_ch, nonneg_ch, rel_ch,
+             rows) = channel_inner_pass(
+                X[ch], D_per_channel[ch],
+                A_per_channel[ch], Y_per_channel[ch],
+                idxs, n_used, lam_tv, t + 1,
+                cfg, ch, dataset_indices, H, W,
+                images_orig=None,   # focus analysis not used in joint mode
+            )
+            all_pdhg_res.extend(pfr)
+            all_pdhg_iters.extend(piu)
+            tv_acc      += tv_ch
+            fid_acc     += fid_ch
+            obj_acc     += obj_ch
+            nonneg_acc  += nonneg_ch
+            rel_err_acc += rel_ch
+            n_total     += n_used
+            per_image_rows.extend(rows)
 
-            for ii in range(n_used):
-                j = int(idxs[ii])
-
-                x2d = X_ch[j].reshape(H, W)
-                y2d, res_list = prox_tv_nn_pdhg(
-                    x_datum=x2d, lam_tv=lam_tv,
-                    n_iters=cfg.pdhg_iters, tau_tv=cfg.tau_tv, sigma_tv=cfg.sigma_tv,
-                    theta=1.0, tol=cfg.pdhg_tol, return_residuals=True,
-                )
-                pdhg_final_res.append(res_list[-1] if res_list else 0.0)
-                pdhg_iters_used.append(len(res_list))
-                y = y2d.ravel()
-
-                D_ch = D_per_channel[ch]
-                a_new = D_ch.T @ y
-                A_per_channel[ch][j] = a_new
-                Y_per_channel[ch][j] = y
-
-                r = X_ch[j] - D_ch @ a_new
-                fidelity = 0.5 * float(np.dot(r, r))
-                gv = grad_forward(y2d)
-                tv_val = float(np.sum(np.sqrt(gv[..., 0] ** 2 + gv[..., 1] ** 2)))
-                obj = fidelity + lam_tv * tv_val
-                nonneg_viol = float(np.mean(y < -1e-10))
-                x_norm = float(np.linalg.norm(X_ch[j]))
-                rel_err = 100.0 * float(np.linalg.norm(r) / max(x_norm, 1e-9))
-
-                tv_acc += lam_tv * tv_val
-                fid_acc += fidelity
-                obj_acc += obj
-                nonneg_acc += nonneg_viol
-                rel_err_acc += rel_err
-                n_total += 1
-
-                per_image_rows.append({
-                    "outer_iter": float(t + 1),
-                    "channel": ch,
-                    "image_pos": float(ii),
-                    "dataset_index": float(dataset_indices[j]),
-                    "fidelity": fidelity,
-                    "tv_energy": lam_tv * tv_val,
-                    "obj": obj,
-                    "nonneg_violation": nonneg_viol,
-                    "rel_err": rel_err,
-                    "lam_tv": lam_tv,
-                })
-
-        # Per-channel Procrustes dictionary update (Section 7.8)
+        # Step 2 - per-channel Procrustes dictionary update (Section 7.8)
         dict_change = 0.0
-        grad_norm = 0.0
+        grad_norm   = 0.0
         for ch in channels:
             D_ch_old = D_per_channel[ch].copy()
             D_per_channel[ch] = procrustes_update(
@@ -232,21 +179,22 @@ def learn_joint_multichannel(
             )
             dict_change += float(np.linalg.norm(D_per_channel[ch] - D_ch_old, "fro"))
             M_ch = X[ch][idxs[:n_used]].T @ A_per_channel[ch][idxs[:n_used]]
-            grad_norm += float(np.linalg.norm(M_ch, "fro"))
+            grad_norm   += float(np.linalg.norm(M_ch, "fro"))
 
-        # Refresh codes with the new per-channel dictionaries
+        # Step 3 — refresh codes with the updated per-channel dictionaries
         for ch in channels:
             A_per_channel[ch][idxs[:n_used]] = (
                 Y_per_channel[ch][idxs[:n_used]] @ D_per_channel[ch]
             )
 
+        # --- history ---
         n_pairs = float(n_total)
-        pfr = np.array(pdhg_final_res, dtype=float)
-        piu = np.array(pdhg_iters_used, dtype=float)
-        conv_frac  = float(np.mean(piu < cfg.pdhg_iters)) if len(piu) > 0 else 0.0
-        mean_fres  = float(np.mean(pfr)) if len(pfr) > 0 else float("nan")
-        max_fres   = float(np.max(pfr))  if len(pfr) > 0 else float("nan")
-        mean_iters = float(np.mean(piu)) if len(piu) > 0 else float("nan")
+        pfr_arr = np.array(all_pdhg_res, dtype=float)
+        piu_arr = np.array(all_pdhg_iters, dtype=float)
+        conv_frac  = float(np.mean(piu_arr < cfg.pdhg_iters)) if len(piu_arr) > 0 else 0.0
+        mean_fres  = float(np.mean(pfr_arr)) if len(pfr_arr) > 0 else float("nan")
+        max_fres   = float(np.max(pfr_arr))  if len(pfr_arr) > 0 else float("nan")
+        mean_iters = float(np.mean(piu_arr)) if len(piu_arr) > 0 else float("nan")
 
         hist["tv_energy"].append(tv_acc / n_pairs)
         hist["fidelity"].append(fid_acc / n_pairs)
@@ -275,12 +223,11 @@ def learn_joint_multichannel(
             f"converged={conv_frac*100:.1f}%"
         )
 
-        # Early stopping
+        # Step 4 — convergence check (aggregate over all channels)
         obj_cur = fid_acc / n_pairs
         obj_rel_change = abs(obj_cur - obj_prev) / (abs(obj_prev) + 1e-12)
         obj_prev = obj_cur
-        C_ch = float(len(channels))
-        dict_change_norm = (dict_change / C_ch) / max(1.0, float(np.sqrt(k)))
+        dict_change_norm = (dict_change / float(C)) / max(1.0, float(np.sqrt(k)))
         if obj_rel_change < cfg.outer_tol_obj or dict_change_norm < cfg.outer_tol_dict:
             consecutive_stop += 1
         else:
@@ -293,7 +240,7 @@ def learn_joint_multichannel(
             )
             break
 
-    # Unified cell descriptor phi_j = (a_j^(1), ..., a_j^(C)) in R^{C*K}
+    # Unified cell descriptor Phi_j = (a_j^(1), ..., a_j^(C)) in R^{C*K}
     Phi = np.concatenate(
         [A_per_channel[ch] for ch in channels], axis=1
     )  # (N, C*K)

@@ -1,11 +1,10 @@
 """
-config.py — Configuration dataclass and channel list.
+config.py - Configuration dataclass and channel list.
 
 LearnConfig holds every hyper-parameter that controls training:
 TV regularisation schedule, PDHG step sizes, outer-loop stopping
 criteria, and evaluation thresholds.
 
-BSCCM_CHANNELS lists the five LED-array channels used in Algorithm 2.
 """
 from __future__ import annotations
 
@@ -25,18 +24,6 @@ class LearnConfig:
     """
     Hyper-parameters for Algorithm 1 (single-channel) and
     Algorithm 2 (joint multi-channel) dictionary learning.
-
-    TV schedule
-    -----------
-    lambda_TV(t) = max(mu_tv * delta,  lam_tv_init / (1 + lam_tv_decay * t))
-
-    At t=0     : lambda_TV = lam_tv_init  (strong smoothing, poor initial D)
-    As t -> inf: lambda_TV -> mu_tv * delta  (Theorem 9 noise-floor guarantee)
-
-    PDHG step sizes
-    ---------------
-    tau_tv = sigma_tv = 1/4 satisfies the condition
-        tau * sigma * ||grad||^2 <= tau * sigma * 8 = 1/2 < 1  (Theorem 4).
     """
 
     # --- TV regularisation floor (Theorem 9) ----------------------------
@@ -79,8 +66,6 @@ class LearnConfig:
     k_max: int = 512
 
     # --- Convergence-plot PDHG probe ------------------------------------
-    # A single PDHG run on one representative image is used only for
-    # generating the residual-decay panel in the convergence figure.
     plot_pdhg_iters: int   = 1000
     plot_pdhg_tol:   float = 1e-12
 

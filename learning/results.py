@@ -1,18 +1,5 @@
 """
-results.py — Saving training results to disk.
-
-Two functions:
-  save_training_results  — single-channel (Algorithm 1) run
-  save_joint_results     — joint multi-channel (Algorithm 2) run
-
-Both write:
-  * dictionary_D[_<channel>].npy
-  * codes_A[_<channel>].npy
-  * training_scores.csv  /  joint_training_scores.csv
-  * config.json
-  * history.json
-  * history_per_epoch.csv  (joint only)
-  * train_indices.txt
+results.py - Saving training results to disk.
 """
 from __future__ import annotations
 
@@ -39,10 +26,6 @@ def save_training_results(
 ) -> None:
     """
     Save Algorithm 1 (single-channel) results.
-
-    Files written to ``out_dir/``:
-      training_scores.csv, train_indices.txt, config.json,
-      dictionary_D.npy, codes_A.npy, train_images.npy, history.json
     """
     od = pathlib.Path(out_dir)
     od.mkdir(parents=True, exist_ok=True)
@@ -84,13 +67,6 @@ def save_joint_results(
 ) -> None:
     """
     Save Algorithm 2 (joint multi-channel) results.
-
-    Files written to ``out_dir/``:
-      joint_training_scores.csv, train_indices.txt, config.json,
-      dictionary_D_<channel>.npy (one per channel),
-      codes_A_<channel>.npy (one per channel),
-      unified_descriptors_Phi.npy, train_images_ref_channel.npy,
-      history.json, history_per_epoch.csv
     """
     od = pathlib.Path(out_dir)
     od.mkdir(parents=True, exist_ok=True)
