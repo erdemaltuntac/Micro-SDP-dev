@@ -12,44 +12,53 @@
 
 A Python package for learning channel-specific and joint multi-channel dictionaries from microscopy images using Total Variation (TV) regularisation and non-negativity constraints. Companion code for the manuscript:
 
-> *[Title]*, [Authors], *[Journal]*, 2026.
+> *Learned Dictionaries with Total Variation and Non-Negativity for Single-Cell Microscopy: Convergence Theory and Deterministic Multi-Channel Cell Feature Unification*, Aegis Digital Technologies, 2026.  
+> **arXiv:** [2604.05211](https://arxiv.org/abs/2604.05211)  [math.NA]
 
 ---
 
 ## Overview
 
-`sdp` (Structured Dictionary Priors) implements two algorithms:
+`learning` (Structured Dictionary Priors) implements two algorithms:
 
-- **Algorithm 1 — Single-channel dictionary learning**: learns a dictionary from images of one imaging channel using a PDHG inner solver with TV + non-negativity proximal operators.
-- **Algorithm 2 — Joint multi-channel dictionary learning**: learns a shared latent structure across multiple imaging channels (e.g. Brightfield, DPC Left/Right/Top/Bottom) simultaneously.
+- **Algorithm 1; Single-channel dictionary learning**: learns a dictionary from images of one imaging channel using a PDHG inner solver with TV + non-negativity proximal operators.
+- **Algorithm 2; Joint multi-channel dictionary learning**: learns a shared latent structure across multiple imaging channels (e.g. Brightfield, DPC Left/Right/Top/Bottom) simultaneously.
 
-Validation is performed on the [BSCCM dataset](https://github.com/henrypinkard/BSCCM) — a blood-smear cell microscopy collection with ground-truth cell-type labels.
+Validation is performed on the [BSCCM dataset](https://github.com/henrypinkard/BSCCM) - a single-cell microscopy collection with ground-truth cell-type labels.
 
 ---
 
 ## Repository Structure
 
+The top-level scripts handle training and figure generation; the `learning/` package contains all algorithmic components.
+
 ```
 Micro-SDP-dev/
-├── run_training.py          # Entry point: trains all channels + joint model
-├── run_post_training_figures.py  # Re-generate figures from saved artifacts
-├── requirements.txt
-├── LICENSE
-├── assets/
-│   └── aegis_logo.svg
-└── sdp/
-    ├── __init__.py
-    ├── config.py            # LearnConfig dataclass, channel definitions
-    ├── tv_operators.py      # Forward gradient, backward divergence, L2-ball projection
-    ├── stiefel.py           # Stiefel manifold projection, Procrustes update
-    ├── dictionary_init.py   # DCT and random orthonormal initialisation
-    ├── pdhg_solver.py       # PDHG inner loop (TV + non-negativity)
-    ├── train_single.py      # Algorithm 1: single-channel training
-    ├── train_joint.py       # Algorithm 2: joint multi-channel training
-    ├── data_loader.py       # BSCCM data loading pipeline
-    ├── artifacts.py         # Save / load training artifacts (.npy)
-    ├── evaluate.py          # PSNR, reconstruction evaluation, biological validation
-    └── plots.py             # Convergence plots, unified cell figures, truth comparisons
+
+  run_training.py               # main entry point - train, evaluate, save
+  run_post_training_figures.py  # re-run figures without retraining
+
+  regen_cell_figure.py          # regenerate multi-cell grid from saved results
+  regen_unified_cell.py         # regenerate single-cell portrait
+  regen_convergence_plot.py     # regenerate convergence figure
+
+  requirements.txt
+  LICENSE
+  assets/
+
+  learning/                     # core package
+      config.py                 # LearnConfig, channel list
+      dictionary_init.py        # DCT / random-QR initialisation
+      tv_operators.py           # finite-difference gradient and its adjoint
+      stiefel.py                # Procrustes / Stiefel projection
+      pdhg_solver.py            # inner TV + non-negativity solver (PDHG)
+      train_single.py           # Algorithm 1: single-channel
+      train_joint.py            # Algorithm 2: joint multi-channel
+      data_loader.py            # BSCCM image loading and focus cropping
+      results.py                # save dictionaries, codes, history to disk
+      evaluate.py               # PSNR, reconstruction stats, bio validation
+      plots.py                  # all figure-generating functions
+      bootstrap_validation.py   # bootstrap CI and permutation null test
 ```
 
 ---
@@ -72,6 +81,7 @@ pip install -r requirements.txt
 ### 1. Prepare data
 
 Download the BSCCM-tiny dataset and place it at `dev/BSCCM-tiny/` (or update the path in `run_training.py`).
+For the use of datasource, we encourage users to refer to https://waller-lab.github.io/BSCCM/ 
 
 ### 2. Train
 
@@ -82,10 +92,10 @@ python run_training.py
 This will:
 - Train a dictionary for each imaging channel (Brightfield, DPC Left/Right/Top/Bottom)
 - Train the joint multi-channel model
-- Save artifacts to `training_artifacts_<channel>_<timestamp>_seed<n>/`
+- Save results to `training_results_<channel>_<timestamp>_seed<n>/`
 - Generate convergence plots, reconstructions, and unified-vs-truth figures
 
-### 3. Regenerate figures from saved artifacts
+### 3. Regenerate figures from saved results
 
 ```bash
 python run_post_training_figures.py
@@ -96,9 +106,9 @@ python run_post_training_figures.py
 ## Package API
 
 ```python
-from sdp.config import LearnConfig
-from sdp.train_single import learn_dictionary_from_images
-from sdp.train_joint import learn_joint_multichannel
+from learning.config import LearnConfig
+from learning.train_single import learn_dictionary_from_images
+from learning.train_joint import learn_joint_multichannel
 
 cfg = LearnConfig(n_atoms=64, patch_size=8, n_iter=500)
 
@@ -116,11 +126,11 @@ results = learn_joint_multichannel(images_per_channel, config=cfg)
 If you use this code in your research, please cite:
 
 ```bibtex
-@article{microsdp2026,
-  title   = {[Title]},
-  author  = {[Authors]},
-  journal = {[Journal]},
-  year    = {2026}
+@misc{microsdp2026,
+  title         = {Learned Dictionaries with Total Variation and Non-Negativity for Single-Cell Microscopy: Convergence Theory and Deterministic Multi-Channel Cell Feature Unification},
+  author        = {Aegis Digital Technologies},
+  year          = {2026},
+  url           = {https://arxiv.org/abs/2604.05211}
 }
 ```
 
