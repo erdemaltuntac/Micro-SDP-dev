@@ -111,13 +111,13 @@ from learning.config import LearnConfig
 from learning.train_single import learn_dictionary_from_images
 from learning.train_joint import learn_joint_multichannel
 
-cfg = LearnConfig(n_atoms=64, patch_size=8, n_iter=500)
+cfg = LearnConfig()  # or override fields: LearnConfig(outer_iters=20, lam_tv_init=0.05)
 
-# Single-channel
-D, codes, history = learn_dictionary_from_images(images, config=cfg)
+# Algorithm 1; single-channel  (images: np.ndarray of shape (N, H, W))
+D, A, history, rows = learn_dictionary_from_images(images, k=64, cfg=cfg, channel="Brightfield")
 
-# Joint multi-channel
-results = learn_joint_multichannel(images_per_channel, config=cfg)
+# Algorithm 2; joint multi-channel  (images_per_channel: dict[str, np.ndarray])
+D_per_ch, A_per_ch, Phi, history, rows = learn_joint_multichannel(images_per_channel, k=64, cfg=cfg)
 ```
 
 ---
