@@ -129,7 +129,7 @@ If you use this code in your research, please cite:
 ```bibtex
 @misc{microsdp2026,
   title         = {Learned Dictionaries with Total Variation and Non-Negativity for Single-Cell Microscopy: Convergence Theory and Deterministic Multi-Channel Cell Feature Unification},
-  author        = {Aegis Digital Technologies},
+  author        = {Erdem Altuntac},
   year          = {2026},
   url           = {https://arxiv.org/abs/2604.05211}
 }
