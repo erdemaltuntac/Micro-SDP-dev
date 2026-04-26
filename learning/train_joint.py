@@ -2,7 +2,7 @@
 train_joint.py - Algorithm 2: joint multi-channel dictionary learning.
 
 Algorithm 2 wraps Algorithm 1 as its inner step: for each outer iteration the
-same per-channel PDHG pass (_channel_inner_pass from train_single) is applied
+same per-channel PDHG pass (channel_inner_pass from train_single) is applied
 to every channel under a shared lam_tv schedule and a shared convergence
 criterion, before each channel's dictionary is updated via Procrustes.
 """
@@ -157,7 +157,7 @@ def learn_joint_multichannel(
                 A_per_channel[ch], Y_per_channel[ch],
                 idxs, n_used, lam_tv, t + 1,
                 cfg, ch, dataset_indices, H, W,
-                images_orig=None,   # focus analysis not used in joint mode
+                images_orig=None, 
             )
             all_pdhg_res.extend(pfr)
             all_pdhg_iters.extend(piu)
@@ -181,7 +181,7 @@ def learn_joint_multichannel(
             M_ch = X[ch][idxs[:n_used]].T @ A_per_channel[ch][idxs[:n_used]]
             grad_norm   += float(np.linalg.norm(M_ch, "fro"))
 
-        # Step 3 — refresh codes with the updated per-channel dictionaries
+        # Step 3 - refresh codes with the updated per-channel dictionaries
         for ch in channels:
             A_per_channel[ch][idxs[:n_used]] = (
                 Y_per_channel[ch][idxs[:n_used]] @ D_per_channel[ch]
@@ -223,7 +223,7 @@ def learn_joint_multichannel(
             f"converged={conv_frac*100:.1f}%"
         )
 
-        # Step 4 — convergence check (aggregate over all channels)
+        # Step 4 - convergence check (aggregate over all channels)
         obj_cur = fid_acc / n_pairs
         obj_rel_change = abs(obj_cur - obj_prev) / (abs(obj_prev) + 1e-12)
         obj_prev = obj_cur
