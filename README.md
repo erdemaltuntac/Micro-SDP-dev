@@ -8,9 +8,10 @@
 
 # Micro-SDP
 
-**Structured Dictionary Priors for Quantitative Microscopy**
+**Smart Detection and Prediction of Single Cells within Heterogeneous Microscopic Images**  
+*Dictionary Learning Module*
 
-A Python package for learning channel-specific and joint multi-channel dictionaries from microscopy images using Total Variation (TV) regularisation and non-negativity constraints. Companion code for the manuscript:
+This repository contains the dictionary learning component of the Micro-SDP system. It provides channel-specific and joint multi-channel dictionary learning from microscopy images using Total Variation (TV) regularisation and non-negativity constraints. Companion code for the manuscript:
 
 > *Learned Dictionaries with Total Variation and Non-Negativity for Single-Cell Microscopy: Convergence Theory and Deterministic Multi-Channel Cell Feature Unification*, Aegis Digital Technologies, 2026.  
 > **arXiv:** [2604.05211](https://arxiv.org/abs/2604.05211)  [math.NA]
@@ -19,10 +20,10 @@ A Python package for learning channel-specific and joint multi-channel dictionar
 
 ## Overview
 
-`learning` (Structured Dictionary Priors) implements two algorithms:
+The `learning` package implements two algorithms:
 
 - **Algorithm 1; Single-channel dictionary learning**: learns a dictionary from images of one imaging channel using a PDHG inner solver with TV + non-negativity proximal operators.
-- **Algorithm 2; Joint multi-channel dictionary learning**: learns a shared latent structure across multiple imaging channels (e.g. Brightfield, DPC Left/Right/Top/Bottom) simultaneously.
+- **Algorithm 2; Joint multi-channel dictionary learning**: learns a shared dictionary across multiple imaging channels (e.g. Brightfield, DPC Left/Right/Top/Bottom), with channel-specific sparse codes.
 
 Validation is performed on the [BSCCM dataset](https://github.com/henrypinkard/BSCCM) - a single-cell microscopy collection with ground-truth cell-type labels.
 
@@ -81,7 +82,7 @@ pip install -r requirements.txt
 ### 1. Prepare data
 
 Download the BSCCM-tiny dataset and place it at `dev/BSCCM-tiny/` (or update the path in `run_training.py`).
-For the use of datasource, we encourage users to refer to https://waller-lab.github.io/BSCCM/ 
+For the structure and use of datasource, we encourage users to refer to https://waller-lab.github.io/BSCCM/ 
 
 ### 2. Train
 
